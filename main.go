@@ -65,13 +65,7 @@ func main() {
 }
 
 func advHandler(a ble.Advertisement) {
-	found := false
-	for _, uuid := range a.Services() {
-		if uuid.String() == "cba20d00224d11e69fb80002a5d5c51b" {
-			found = true
-		}
-	}
-	if !found {
+	if !containsSwitchBotServiceUUID(a.Services()) {
 		return
 	}
 
@@ -104,6 +98,20 @@ func advHandler(a ble.Advertisement) {
 			Battery:     battery,
 		}
 	}
+}
+
+func containsSwitchBotServiceUUID(services []ble.UUID) bool {
+	const (
+		SwitchBotServiceUUID = "cba20d00224d11e69fb80002a5d5c51b"
+	)
+
+	for _, uuid := range services {
+		if uuid.String() == SwitchBotServiceUUID {
+			return true
+		}
+	}
+
+	return false
 }
 
 type switchBotMeterCollector struct {
