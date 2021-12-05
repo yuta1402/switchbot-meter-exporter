@@ -5,7 +5,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/go-ble/ble"
 	"github.com/go-ble/ble/examples/lib/dev"
@@ -20,10 +19,9 @@ const (
 )
 
 type deviceStatus struct {
-	Temperature    float64
-	Humidity       int
-	Battery        int
-	LastUpdateTime time.Time
+	Temperature float64
+	Humidity    int
+	Battery     int
 }
 
 var deviceStatusByAddr = map[string]deviceStatus{}
@@ -101,10 +99,9 @@ func advHandler(a ble.Advertisement) {
 		log.Printf("[%s] temperature: %.1f, humidity: %d, battery: %d\n", a.Addr(), temp, humidity, battery)
 
 		deviceStatusByAddr[a.Addr().String()] = deviceStatus{
-			Temperature:    temp,
-			Humidity:       humidity,
-			Battery:        battery,
-			LastUpdateTime: time.Now(),
+			Temperature: temp,
+			Humidity:    humidity,
+			Battery:     battery,
 		}
 	}
 }
