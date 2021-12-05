@@ -2,25 +2,39 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/go-ble/ble"
 	"github.com/go-ble/ble/examples/lib/dev"
 	"github.com/go-ble/ble/linux"
 	"github.com/go-ble/ble/linux/hci/cmd"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-type DeviceStatus struct {
+const (
+	namespace = "switchbot_meter"
+)
+
+type deviceStatus struct {
 	Temperature    float64
 	Humidity       int
 	Battery        int
 	LastUpdateTime time.Time
 }
 
-var deviceStatusByAddr = map[string]DeviceStatus{}
+var deviceStatusByAddr = map[string]deviceStatus{}
 
 func main() {
+	var (
+		addr = flag.String("listen-address", ":2112", "")
+	)
+
+	flag.Parse()
+
 	d, err := dev.NewDevice("default")
 	if err != nil {
 		log.Fatalf("can't new device : %s", err)
@@ -38,8 +52,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-	ble.Scan(ctx, true, advHandler, nil)
+	collector := newSwitchBotMeterCollector()
+	prometheus.MustRegister(collector)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go ble.Scan(ctx, true, advHandler, nil)
+
+	http.Handle("/metrics", promhttp.Handler())
+	if err := http.ListenAndServe(*addr, nil); err != nil {
+		cancel()
+		log.Fatal(err)
+	}
 }
 
 func advHandler(a ble.Advertisement) {
@@ -76,11 +100,52 @@ func advHandler(a ble.Advertisement) {
 
 		log.Printf("[%s] temperature: %.1f, humidity: %d, battery: %d\n", a.Addr(), temp, humidity, battery)
 
-		deviceStatusByAddr[a.Addr().String()] = DeviceStatus{
+		deviceStatusByAddr[a.Addr().String()] = deviceStatus{
 			Temperature:    temp,
 			Humidity:       humidity,
 			Battery:        battery,
 			LastUpdateTime: time.Now(),
 		}
 	}
+}
+
+type switchBotMeterCollector struct {
+	tempGauge    *prometheus.GaugeVec
+	humGauge     *prometheus.GaugeVec
+	batteryGauge *prometheus.GaugeVec
+}
+
+func newSwitchBotMeterCollector() *switchBotMeterCollector {
+	return &switchBotMeterCollector{
+		tempGauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "temperature",
+		}, []string{"addr"}),
+		humGauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "humidity",
+		}, []string{"addr"}),
+		batteryGauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "battery",
+		}, []string{"addr"}),
+	}
+}
+
+func (c *switchBotMeterCollector) Describe(ch chan<- *prometheus.Desc) {
+	c.tempGauge.Describe(ch)
+	c.humGauge.Describe(ch)
+	c.batteryGauge.Describe(ch)
+}
+
+func (c *switchBotMeterCollector) Collect(ch chan<- prometheus.Metric) {
+	for addr, status := range deviceStatusByAddr {
+		c.tempGauge.WithLabelValues(addr).Set(status.Temperature)
+		c.humGauge.WithLabelValues(addr).Set(float64(status.Humidity))
+		c.batteryGauge.WithLabelValues(addr).Set(float64(status.Battery))
+	}
+
+	c.tempGauge.Collect(ch)
+	c.humGauge.Collect(ch)
+	c.batteryGauge.Collect(ch)
 }
