@@ -16,6 +16,9 @@ import (
 
 const (
 	namespace = "switchbot_meter"
+
+	// https://github.com/OpenWonderLabs/SwitchBotAPI-BLE?tab=readme-ov-file#uuid-update-notes
+	SwitchBotServiceDataUUID = "fd3d"
 )
 
 type deviceStatus struct {
@@ -65,11 +68,11 @@ func main() {
 }
 
 func advHandler(a ble.Advertisement) {
-	if !containsSwitchBotServiceUUID(a.Services()) {
-		return
-	}
-
 	for _, data := range a.ServiceData() {
+		if data.UUID.String() != SwitchBotServiceDataUUID {
+			continue
+		}
+
 		if len(data.Data) <= 0 {
 			continue
 		}
@@ -98,20 +101,6 @@ func advHandler(a ble.Advertisement) {
 			Battery:     battery,
 		}
 	}
-}
-
-func containsSwitchBotServiceUUID(services []ble.UUID) bool {
-	const (
-		SwitchBotServiceUUID = "cba20d00224d11e69fb80002a5d5c51b"
-	)
-
-	for _, uuid := range services {
-		if uuid.String() == SwitchBotServiceUUID {
-			return true
-		}
-	}
-
-	return false
 }
 
 type switchBotMeterCollector struct {
