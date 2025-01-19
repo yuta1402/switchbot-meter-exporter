@@ -21,13 +21,19 @@ const (
 	SwitchBotServiceDataUUID = "fd3d"
 )
 
-type deviceStatus struct {
+type meterDeviceStatus struct {
 	Temperature float64
 	Humidity    int
 	Battery     int
 }
 
-var deviceStatusByAddr = map[string]deviceStatus{}
+type hub2DeviceStatus struct {
+	Temperature float64
+	Humidity    int
+}
+
+var meterDeviceStatusByAddr = map[string]meterDeviceStatus{}
+var hub2DeviceStatusByAddr = map[string]hub2DeviceStatus{}
 
 func main() {
 	var (
@@ -77,29 +83,56 @@ func advHandler(a ble.Advertisement) {
 			continue
 		}
 
-		// devType が SwitchBot MeterTH かどうかチェック
 		// devType: https://github.com/OpenWonderLabs/python-host/wiki/Meter-BLE-open-API#Broadcast_Message
 		devType := data.Data[0] & 0x7f
-		if devType != 0x54 {
-			continue
+
+		switch devType {
+		case 0x54:
+			updateMeterDeviceStatus(a.Addr().String(), data.Data)
+		case 0x76:
+			updateHub2DeviceStatus(a.Addr().String(), a.ManufacturerData())
+		default:
 		}
+	}
+}
 
-		if len(data.Data) < 6 {
-			continue
-		}
+func updateHub2DeviceStatus(addr string, data []byte) {
+	if len(data) < 18 {
+		return
+	}
 
-		battery := int(data.Data[2])
-		temp := float64(data.Data[4] & 0x7f)
-		temp += float64(data.Data[3]) / 10
-		humidity := int(data.Data[5] & 0x7f)
+	temp := float64(data[15]&0xf)/10 + float64(data[16]&0x7f)
+	above_freezing := data[16] & 0x80
+	if above_freezing == 0 {
+		temp = -temp
+	}
 
-		log.Printf("[%s] temperature: %.1f, humidity: %d, battery: %d\n", a.Addr(), temp, humidity, battery)
+	humidity := int(data[17] & 0x7f)
 
-		deviceStatusByAddr[a.Addr().String()] = deviceStatus{
-			Temperature: temp,
-			Humidity:    humidity,
-			Battery:     battery,
-		}
+	log.Printf("[%s] Hub2, temp: %.1f, humidity: %d", addr, temp, humidity)
+
+	hub2DeviceStatusByAddr[addr] = hub2DeviceStatus{
+		Temperature: temp,
+		Humidity:    humidity,
+	}
+}
+
+func updateMeterDeviceStatus(addr string, data []byte) {
+	if len(data) < 6 {
+		return
+	}
+
+	battery := int(data[2])
+	temp := float64(data[4] & 0x7f)
+	temp += float64(data[3]) / 10
+	humidity := int(data[5] & 0x7f)
+
+	log.Printf("[%s] Meter, temp: %.1f, humidity: %d, battery: %d\n", addr, temp, humidity, battery)
+
+	meterDeviceStatusByAddr[addr] = meterDeviceStatus{
+		Temperature: temp,
+		Humidity:    humidity,
+		Battery:     battery,
 	}
 }
 
@@ -133,10 +166,15 @@ func (c *switchBotMeterCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *switchBotMeterCollector) Collect(ch chan<- prometheus.Metric) {
-	for addr, status := range deviceStatusByAddr {
+	for addr, status := range meterDeviceStatusByAddr {
 		c.tempGauge.WithLabelValues(addr).Set(status.Temperature)
 		c.humGauge.WithLabelValues(addr).Set(float64(status.Humidity))
 		c.batteryGauge.WithLabelValues(addr).Set(float64(status.Battery))
+	}
+
+	for addr, status := range hub2DeviceStatusByAddr {
+		c.tempGauge.WithLabelValues(addr).Set(status.Temperature)
+		c.humGauge.WithLabelValues(addr).Set(float64(status.Humidity))
 	}
 
 	c.tempGauge.Collect(ch)
