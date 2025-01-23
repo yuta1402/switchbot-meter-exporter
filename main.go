@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"slices"
 
 	"github.com/go-ble/ble"
 	"github.com/go-ble/ble/examples/lib/dev"
@@ -35,10 +37,25 @@ type hub2DeviceStatus struct {
 var meterDeviceStatusByAddr = map[string]meterDeviceStatus{}
 var hub2DeviceStatusByAddr = map[string]hub2DeviceStatus{}
 
+type sliceString []string
+
+func (s *sliceString) String() string {
+	return fmt.Sprintf("%s", *s)
+}
+
+func (s *sliceString) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+var (
+	addr       string
+	bleFilters sliceString
+)
+
 func main() {
-	var (
-		addr = flag.String("listen-address", ":2112", "")
-	)
+	flag.StringVar(&addr, "listen-address", ":2112", "")
+	flag.Var(&bleFilters, "ble", "")
 
 	flag.Parse()
 
@@ -67,13 +84,17 @@ func main() {
 	go ble.Scan(ctx, true, advHandler, nil)
 
 	http.Handle("/metrics", promhttp.Handler())
-	if err := http.ListenAndServe(*addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, nil); err != nil {
 		cancel()
 		log.Fatal(err)
 	}
 }
 
 func advHandler(a ble.Advertisement) {
+	if len(bleFilters) > 0 && !slices.Contains(bleFilters, a.Addr().String()) {
+		return
+	}
+
 	for _, data := range a.ServiceData() {
 		if data.UUID.String() != SwitchBotServiceDataUUID {
 			continue
